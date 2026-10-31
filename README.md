@@ -1,5 +1,11 @@
 # 智能戳一戳插件 (Smart Poke Plugin)
 
+[![Release](https://img.shields.io/github/v/release/Wenaixi/mai-smart-poke-reaction?style=flat-square&color=blue&label=release)](https://github.com/Wenaixi/mai-smart-poke-reaction/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/Wenaixi/mai-smart-poke-reaction/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/Wenaixi/mai-smart-poke-reaction/actions)
+[![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue?style=flat-square)](https://www.python.org/)
+[![MaiBot](https://img.shields.io/badge/MaiBot-1.2%2B-orange?style=flat-square)](https://docs.mai-mai.org)
+
 > 本插件由 [Wenaixi](https://github.com/Wenaixi) 维护，是专为生产环境深度调优的高可用分支。
 
 ## 简介与定位
@@ -7,7 +13,6 @@
 拟人化 QQ 戳一戳互动插件，支持根据人设随口回戳、文字调侃与贴表情回应。
 
 - **插件目录**：`wenaixi_mai_smart_poke_reaction`
-- **生效版本**：`v1.8.4`
 - **开源许可证**：`MIT`
 
 ---

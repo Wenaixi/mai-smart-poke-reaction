@@ -1,6 +1,6 @@
 {
   "manifest_version": 2,
-  "version": "1.8.4",
+  "version": "0.1.0",
   "name": "麦麦智能戳一戳调侃互动",
   "description": "一个让麦麦在 QQ 戳一戳里尽量像真人一样反应的拟人化交互插件。",
   "author": {
