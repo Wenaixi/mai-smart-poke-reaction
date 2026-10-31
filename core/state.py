@@ -48,6 +48,11 @@ class PokeContext:
         "stream_id",
         "cooldown_key",
         "spam_scope_key",
+        "raw_text",
+        "action_prefix",
+        "action_verb",
+        "target_suffix",
+        "my_suffix",
     )
 
     def __init__(self) -> None:

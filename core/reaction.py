@@ -455,12 +455,30 @@ class ReactionExecutor:
         poker = (ctx.poker_name or "").strip() or "有人"
         action = (ctx.poke_action or "").strip() or "戳了戳"
 
+        raw_info_block = ""
+        if ctx.raw_text:
+            raw_info_block = f"【QQ系统通知原文】「{ctx.raw_text}」\n"
+
+        personalized_block = ""
+        if ctx.my_suffix:
+            personalized_block = (
+                f"【个性化后缀提示】对方触发了你的 QQ 戳一戳个性后缀「{ctx.my_suffix}」。"
+                "你可以顺着这个有趣的部位、动作或搞笑设定自然调皮地随口调侃一句。\n"
+            )
+        elif ctx.target_suffix:
+            personalized_block = f"【个性化后缀】本次戳一戳带有后缀「{ctx.target_suffix}」。\n"
+
+        if ctx.action_prefix:
+            personalized_block += f"【动作修饰】对方带有自定义动作前缀「{ctx.action_prefix}」。\n"
+
         system = (
             f"{persona}\n\n"
             f"【功能认知】在 QQ {scene}中，「戳一戳」（双击对方头像，系统提示「{poker} {action}了你」）只是 QQ 里的一个轻量社交互动小功能，"
-            "通常用于打招呼、轻拍提醒、或者顺手提到别人，没有任何身体接触或恶意攻击意味。\n"
-            f"现在「{poker}」在 {scene}里{action}了你。\n"
-            "请根据你的人设自然、轻松、友好地随口回应一句（例如调皮地问怎么啦、有什么事、或者亲切打个招呼）。\n"
+            "没有任何身体接触或恶意攻击意味，常带有各种搞笑有趣的个性化动作与词缀。\n"
+            f"{raw_info_block}"
+            f"{personalized_block}"
+            f"现在「{poker}」在 {scene}里对你发起了戳一戳。\n"
+            "请根据你的人设自然、轻松、友好地随口回应一句（例如调皮地问怎么啦、接住对方的梗、或亲切打个招呼）。\n"
             "回复要简短白话（3~20字内），像真人随口回复；只输出回复正文，严禁添加引号、括号、解释或任何前缀。"
         )
         style = self._plugin.config.reaction.llm_response_style.strip()
@@ -471,10 +489,12 @@ class ReactionExecutor:
                 "\n\n这是最近的聊天记录，仅供你了解当前氛围，不要直接回复其中的内容：\n"
                 f"{context_text}"
             )
+
+        notice_hint = f"（系统原文：{ctx.raw_text}）" if ctx.raw_text else f"（动作：{action}）"
         if is_spam:
-            user = f"「{poker}」连续多次{action}你（像连拍了好几下提醒你），请根据你的人设简短随口回一句（比如问怎么连着拍你、是不是找你有急事）。"
+            user = f"「{poker}」连续多次{action}你{notice_hint}，请根据你的人设简短随口回一句（比如调侃怎么连着拍你、是不是找你有急事）。"
         else:
-            user = f"「{poker}」{action}了你来打招呼或提醒你，请根据你的人设简短随口回一句。"
+            user = f"「{poker}」在{scene}里对你发起戳一戳{notice_hint}，请根据你的人设简短随口回一句。"
 
         return [
             {"role": "system", "content": system},

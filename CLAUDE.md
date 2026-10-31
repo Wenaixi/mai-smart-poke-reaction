@@ -48,3 +48,11 @@
     3. 清空 `config.toml` 与 `config.example.toml` 中的 `[fallback]` 词库，将 `text_weight` 降为 0.0，调优 `llm_weight=0.4`、`back_poke_weight=0.6`；
     4. 重构 `_build_llm_prompt`，明确灌注功能认知，约束回复为 3~20 字内简短白话随口一回。
   - **验证**：新增单元测试 2 项全绿。
+
+- 2026-10-31: 深度支持 QQ 原生个性化戳一戳（发起者动作前缀 + 谓语 + 麦麦个性后缀）
+  - **背景**：针对主人提出的个性化戳一戳（如"真人机麦麦 欢迎加入信息社生活部!拍了拍准大一姜丝丝,努力学习只为回家的睡个好觉吃个水饺"），排查发现原适配器与插件硬编码只截取索引 2 与 4，或在首个 nor 处截断，丢失了动作修饰与搞笑后缀。
+  - **改动**：
+    1. `core/state.py`：PokeContext 增加 `raw_text`、`action_prefix`、`action_verb`、`target_suffix` 和 `my_suffix`；
+    2. `plugin.py`：实现 `_parse_poke_details`，无损组合系统原话并结构化提取三要素；
+    3. `core/reaction.py`：重构 `_build_llm_prompt`，向大模型灌注【QQ系统通知原文】与【个性化后缀提示】，引导麦麦敏锐捕捉对方触发的部位或设定（如水饺、生活部）自然调侃随口一回。
+  - **验证**：新增端到端全量字段与 Prompt 注入测试用例，pytest 100% 通过。
