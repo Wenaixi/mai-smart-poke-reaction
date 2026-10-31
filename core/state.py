@@ -66,6 +66,11 @@ class PokeContext:
         # 与 cooldown_key 解耦：proactive 分支查 _poked_bot_recently 只能传 group_id，
         # 必须与 record 端用同一个 scope 才能匹配
         self.spam_scope_key: str = ""
+        self.raw_text: str = ""
+        self.action_prefix: str = ""
+        self.action_verb: str = "戳了戳"
+        self.target_suffix: str = ""
+        self.my_suffix: str = ""
 
     @property
     def is_poking_bot(self) -> bool:

@@ -638,27 +638,70 @@ class SmartPokePlugin(MaiBotPlugin):
         # 逐人冷却分裂成两个 key 而短暂失效。stream_id 只用于发送，不参与冷却 key。
         ctx.cooldown_key = ctx.group_id or ctx.poker_id
         ctx.spam_scope_key = ctx.group_id if ctx.is_group else ctx.poker_id
-        ctx.poke_action = self._extract_poke_action(payload)
+        (
+            ctx.raw_text,
+            ctx.action_prefix,
+            ctx.action_verb,
+            ctx.poke_action,
+            ctx.target_suffix,
+        ) = self._parse_poke_details(payload)
+        if ctx.target_id == self_id:
+            ctx.my_suffix = ctx.target_suffix.lstrip("的").strip()
+        else:
+            ctx.my_suffix = ""
         return ctx
 
     @staticmethod
-    def _extract_poke_action(payload: dict) -> str:
-        """从 napcat poke notice 的 raw_info 提取自定义戳一戳动作文本（如"拍了拍""捏了捏"）。
+    def _parse_poke_details(payload: dict) -> tuple[str, str, str, str, str]:
+        """从 napcat / snowluma poke notice 的 raw_info 中无损解析个性化戳一戳各要素。
 
-        napcat 在 poke notice 的 raw_info 里以
-        ``[{"type":"nor","txt":"拍了拍"}, {"type":"qq", ...}, {"type":"nor","txt":"的脸"}]``
-        形式给出，第一个 ``nor`` 文本即动作词；取不到（旧版 / 无该字段）返回空串，
-        由调用方兜底为"戳了戳"，因此 napcat 不发 raw_info 时也不会回归。
+        Returns:
+            tuple: (raw_text, action_prefix, action_verb, poke_action, target_suffix)
         """
         raw_info = payload.get("raw_info")
-        if not isinstance(raw_info, list):
-            return ""
-        for col in raw_info:
-            if isinstance(col, dict) and col.get("type") == "nor":
-                txt = str(col.get("txt") or "").strip()
-                if txt:
-                    return txt
-        return ""
+        if not isinstance(raw_info, list) or not raw_info:
+            return "", "", "戳了戳", "戳了戳", ""
+
+        raw_text = "".join(
+            str(item.get("txt") or item.get("text") or "")
+            for item in raw_info if isinstance(item, dict)
+        ).strip()
+
+        nor_items = [
+            str(item.get("txt") or item.get("text") or "").strip()
+            for item in raw_info if isinstance(item, dict) and item.get("type") == "nor"
+        ]
+
+        action_prefix = ""
+        action_verb = "戳了戳"
+        target_suffix = ""
+
+        verbs = ("拍了拍", "戳了戳", "揉了揉", "捏了捏", "弹了弹", "抱了抱", "摸了摸")
+        verb_idx = -1
+        for idx, item in enumerate(nor_items):
+            if any(v in item for v in verbs):
+                verb_idx = idx
+                action_verb = item
+                break
+
+        if verb_idx != -1:
+            if verb_idx > 0:
+                action_prefix = "".join(nor_items[:verb_idx]).strip()
+            if verb_idx + 1 < len(nor_items):
+                target_suffix = "".join(nor_items[verb_idx + 1:]).strip()
+        elif nor_items:
+            action_verb = nor_items[0]
+            if len(nor_items) > 1:
+                target_suffix = "".join(nor_items[1:]).strip()
+
+        full_action = f"{action_prefix} {action_verb}".strip() if action_prefix else action_verb
+        return raw_text, action_prefix, action_verb, full_action, target_suffix
+
+    @staticmethod
+    def _extract_poke_action(payload: dict) -> str:
+        """兼容保留的动作提取方法。"""
+        _, _, _, full_action, _ = SmartPokePlugin._parse_poke_details(payload)
+        return full_action
 
 
 def create_plugin() -> SmartPokePlugin:
