@@ -1,12 +1,9 @@
 {
   "manifest_version": 2,
   "version": "1.8.4",
-  "name": "智能戳一戳插件 | Smart Poke Plugin",
+  "name": "麦麦智能戳一戳调侃互动",
   "description": "一个让麦麦在 QQ 戳一戳里尽量像真人一样反应的拟人化交互插件。",
-  "author": {
-    "name": "TaiYang",
-    "url": "https://github.com/TAIY2020"
-  },
+  "author": "Wenaixi",
   "license": "MIT",
   "urls": {
     "repository": "https://github.com/TAIY2020/smart_poke_plugin",
@@ -53,5 +50,5 @@
       "value": "./assets/icon.webp"
     }
   },
-  "id": "TAIY2020.smart_poke_plugin"
+  "id": "wenaixi.mai_smart_poke_reaction"
 }

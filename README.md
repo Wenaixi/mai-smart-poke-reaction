@@ -6,7 +6,7 @@
 
 拟人化 QQ 戳一戳互动插件，支持根据人设随口回戳、文字调侃与贴表情回应。
 
-- **插件目录**：`TAIY2020_smart_poke_plugin`
+- **插件目录**：`wenaixi_mai_smart_poke_reaction`
 - **生效版本**：`v1.8.4`
 - **开源许可证**：`MIT`
 
