@@ -391,40 +391,25 @@ class ReactionSection(PluginConfigBase):
 
 
 class FallbackSection(PluginConfigBase):
-    """文字回复随机池。"""
+    """固定回复词库（已彻底废弃，所有文字回复均交由大模型动态生成或回戳）。"""
 
     __ui_label__ = "文字回复"
 
     normal_replies: list[str] = Field(
-        default_factory=lambda: [
-            "何意味",
-            "你是不是没事干",
-            "干啥",
-        ],
-        description="普通情况下的文字回复随机池",
-        json_schema_extra={"label": "普通回复池"},
+        default_factory=list,
+        description="普通情况下的文字回复随机池（已清空废弃）",
+        json_schema_extra={"label": "普通回复池（已废弃）"},
     )
     spam_replies: list[str] = Field(
-        default_factory=lambda: [
-            "够了",
-            "好烦",
-            "停！手！",
-            "烦不烦",
-            "再戳生气了",
-        ],
-        description="被暴戳后的文字回复随机池",
-        json_schema_extra={"label": "暴戳回复池"},
+        default_factory=list,
+        description="被暴戳后的文字回复随机池（已清空废弃）",
+        json_schema_extra={"label": "暴戳回复池（已废弃）"},
     )
     silent_replies: list[str] = Field(
-        default_factory=lambda: [
-            "...",
-            "？？？",
-            "，，，",
-        ],
-        description="选择「沉默」反应时偶尔会发出的极简内容",
-        json_schema_extra={"label": "沉默回复池"},
+        default_factory=list,
+        description="选择「沉默」反应时偶尔会发出的极简内容（已清空废弃）",
+        json_schema_extra={"label": "沉默回复池（已废弃）"},
     )
-
 
 class UserControlSection(PluginConfigBase):
     """用户控制：黑名单 / 自戳处理。"""

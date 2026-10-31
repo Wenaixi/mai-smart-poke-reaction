@@ -137,61 +137,28 @@ class ReactionExecutor:
             )
 
             if kind == "poke":
-                ok = await self._send_back_poke(ctx, is_spam=is_spam, stream_id=stream_id)
-                if not ok:
-                    if stream_id:
-                        await self._send_text(stream_id, is_spam)
-                    else:
-                        plugin.ctx.logger.debug(
-                            "[smart_poke] 回戳失败且无 stream_id 可回退，本次反应放弃 (poker=%s)",
-                            ctx.poker_id,
-                        )
+                await self._send_back_poke(ctx, is_spam=is_spam, stream_id=stream_id)
                 return
 
             if kind == "emoji":
                 ok = await self._send_emoji(stream_id)
                 if ok:
                     return
-                plugin.ctx.logger.debug("表情反应失败，回退到回戳")
-                ok_poke = await self._send_back_poke(ctx, is_spam=is_spam, stream_id=stream_id)
-                if not ok_poke:
-                    await self._send_text(stream_id, is_spam)
+                plugin.ctx.logger.debug("表情反应未发出，回退到回戳")
+                await self._send_back_poke(ctx, is_spam=is_spam, stream_id=stream_id)
                 return
 
             if kind == "llm":
                 ok = await self._send_llm_reply(ctx, stream_id, is_spam, react_token)
                 if ok:
                     return
-                # LLM 生成软失败（空响应 / 业务 success=False）同样已消耗思考延迟（gather 内的
-                # sleep 已走完），这段延迟里同一人连戳可能已派发更晚的反应任务。与 poke/emoji/text
-                # 档及 _send_llm_reply 成功路径口径一致：回退发送前补一次 supersede 校验，被取代
-                # 则放弃，避免 max_delay_seconds > cooldown_seconds 时旧任务回退与新任务叠加两条。
-                # （RPC 硬异常导致的失败未走完延迟、时间窗口极短，此校验对其也安全无副作用。）
                 if self._superseded(ctx, react_token, "llm"):
                     return
-                # LLM 失败级联回退：先回复池（延迟已在 _send_llm_reply 内消耗，不再补延迟），
-                # 再不行兜底回戳，避免 mark_reacted 了却什么都没发。
-                plugin.ctx.logger.debug(
-                    "[smart_poke] LLM 反应未发出，回退到回复池 (poker=%s)", ctx.poker_id,
-                )
-                # 回退路径即将真正发出一条回复：补记"对方戳了我"前因（_send_llm_reply 仅在
-                # 成功发送前 record，生成失败时未记），同时唤醒 runtime 让回退回复 sync 能记入。
-                await plugin.record_poked_by_to_context(ctx)
-                if await self._send_text(stream_id, is_spam):
-                    return
-                plugin.ctx.logger.debug(
-                    "[smart_poke] LLM 与回复池均未发出，回退到回戳 (poker=%s)", ctx.poker_id,
-                )
+                plugin.ctx.logger.debug("[smart_poke] LLM 反应未发出，回退到回戳 (poker=%s)", ctx.poker_id)
                 await self._send_back_poke(ctx, is_spam=is_spam, stream_id=stream_id)
                 return
 
-            sent = await self._send_text(stream_id, is_spam)
-            if sent:
-                return
-            # 兜底回戳，避免 mark 了却什么都没发
-            plugin.ctx.logger.debug(
-                "[smart_poke] 文字反应未发出，回退到回戳 (poker=%s)", ctx.poker_id,
-            )
+            # 任何其它未知分支一律安全回退到回戳，绝不发送死板固定文字
             await self._send_back_poke(ctx, is_spam=is_spam, stream_id=stream_id)
         except Exception:
             plugin.ctx.logger.exception("反应戳一戳时出错")
@@ -228,28 +195,19 @@ class ReactionExecutor:
         return False
 
     def _decide_reaction_kind(self, is_spam: bool) -> str:
-        """按权重抽取反应类型；暴戳态下回戳 ×1.5、表情 ×0.3、文字 ×1.2、LLM ×0.6。
-
-        暴戳态压低 LLM 权重：被连戳时更应快速回戳 / 甩一句固定狠话，
-        而不是每下都等一次生成。
-
-        「真正沉默」由 handle_poke_event 的 react_probability 未命中分支负责，
-        与本方法的反应类型抽样无关。
-        """
+        """按权重抽取反应类型（已彻底移除固定文字回复，只保留 poke / emoji / llm）。"""
         cfg = self._plugin.config.reaction
         spam_mult_poke = 1.5 if is_spam else 1.0
         spam_mult_emoji = 0.3 if is_spam else 1.0
-        spam_mult_text = 1.2 if is_spam else 1.0
-        spam_mult_llm = 0.6 if is_spam else 1.0
+        spam_mult_llm = 0.8 if is_spam else 1.0
         weights = {
             "poke": max(0.0, cfg.back_poke_weight * spam_mult_poke),
             "emoji": max(0.0, cfg.emoji_weight * spam_mult_emoji),
-            "text": max(0.0, cfg.text_weight * spam_mult_text),
             "llm": max(0.0, cfg.llm_weight * spam_mult_llm),
         }
         total = sum(weights.values())
         if total <= 0:
-            return "text"
+            return "poke"
 
         roll = random.random() * total
         cumulative = 0.0
@@ -257,7 +215,7 @@ class ReactionExecutor:
             cumulative += weight
             if roll < cumulative:
                 return kind
-        return "text"
+        return "poke"
 
     # ===== 内部：发送实现 =====
 
@@ -313,33 +271,6 @@ class ReactionExecutor:
                 stream_id=stream_id or ctx.stream_id,
             )
         return any_success
-
-    async def _send_text(self, stream_id: str, is_spam: bool) -> bool:
-        """从配置的回复池中随机挑一句发出。
-
-        暴戳态不回落到 silent_replies——"..."与"被烦了"语气冲突；前两档全空时
-        让 react_to_poke 走兜底回戳更合适。
-        """
-        cfg = self._plugin.config.fallback
-        if is_spam:
-            primary = cfg.spam_replies
-            secondary = cfg.normal_replies
-            tertiary: list[str] = []
-        else:
-            primary = cfg.normal_replies
-            secondary: list[str] = []
-            tertiary = cfg.silent_replies
-
-        for pool, label in ((primary, "primary"), (secondary, "secondary"), (tertiary, "silent")):
-            if pool:
-                ok = await self._safe_send_text(random.choice(pool), stream_id)
-                if ok:
-                    return True
-                self._plugin.ctx.logger.debug("[_send_text] %s 池发送失败，尝试下一档", label)
-        self._plugin.ctx.logger.debug(
-            "[_send_text] 所有回复池均为空或发送失败 (is_spam=%s)", is_spam,
-        )
-        return False
 
     def _context_sync_kwargs(self) -> dict[str, Any]:
         """开启「写入上下文」时，让 ctx.send 把这条回复按 Host 标准聊天记录格式
@@ -519,51 +450,37 @@ class ReactionExecutor:
     def _build_llm_prompt(
         self, ctx: PokeContext, is_spam: bool, persona: str, context_text: str = ""
     ) -> list[dict[str, str]]:
-        """组装精简 messages：system 放人设(+可选风格+可选聊天记录) + 任务约束，user 放被戳事件。
-
-        ``persona`` 由 ``_resolve_persona`` 给出（已含全局人设回退）。语气默认完全交给
-        人设，仅当用户在 ``reaction.llm_response_style`` 填写时才追加一句风格约束
-        （issue #4：原先硬编码"不失讽刺"等会冲淡 / 带崩用户人设）。
-
-        ``context_text`` 为 ``_fetch_recent_context`` 按 ``reaction.llm_context_messages``
-        拉取的最近聊天记录：默认空（不拉历史、压低首 token 延迟，戳一戳是轻量交互）；
-        非空时作为氛围背景注入 system，并明确标注"仅供了解氛围、勿直接回复其内容"，
-        避免 LLM 把"回应被戳"跑偏成"回应聊天记录"。
-        """
+        """组装更自然生动的 prompt：明确说明戳一戳是 QQ 轻量提醒/打招呼功能，引导模型按真实人设随口回复。"""
         scene = "群聊" if ctx.is_group else "私聊"
         poker = (ctx.poker_name or "").strip() or "有人"
         action = (ctx.poke_action or "").strip() or "戳了戳"
 
         system = (
             f"{persona}\n\n"
-            f"现在「{poker}」在 QQ {scene}里{action}你。"
-            f"请就「{action}」这个动作回应一句——要贴合「{action}」本身，别把它说成其它动作"
-            f"（对方是「{action}」就别回成「戳」之类）。"
-            "回复要很简短、很白话；只输出这句话本身，不要加引号 / 解释 / 前缀。"
+            f"【功能认知】在 QQ {scene}中，「戳一戳」（双击对方头像，系统提示「{poker} {action}了你」）只是 QQ 里的一个轻量社交互动小功能，"
+            "通常用于打招呼、轻拍提醒、或者顺手提到别人，没有任何身体接触或恶意攻击意味。\n"
+            f"现在「{poker}」在 {scene}里{action}了你。\n"
+            "请根据你的人设自然、轻松、友好地随口回应一句（例如调皮地问怎么啦、有什么事、或者亲切打个招呼）。\n"
+            "回复要简短白话（3~20字内），像真人随口回复；只输出回复正文，严禁添加引号、括号、解释或任何前缀。"
         )
-        # 风格仅在用户显式配置时追加；留空则不塞任何固定腔调，让语气完全由 persona
-        # 主导（issue #4：硬编码"不失讽刺"会冲淡 / 带崩用户人设）。
         style = self._plugin.config.reaction.llm_response_style.strip()
         if style:
             system += f"\n额外回复风格要求：{style}"
-        # 可选注入最近聊天记录作为氛围参考（reaction.llm_context_messages > 0 时）：
-        # 明确标注只是背景、主回应对象仍是「被戳」这件事，避免 LLM 跑偏去答聊天内容。
         if context_text:
             system += (
                 "\n\n这是最近的聊天记录，仅供你了解当前氛围，不要直接回复其中的内容：\n"
                 f"{context_text}"
             )
         if is_spam:
-            user = f"{poker}连续{action}你好几下，很烦人，回一句。"
+            user = f"「{poker}」连续多次{action}你（像连拍了好几下提醒你），请根据你的人设简短随口回一句（比如问怎么连着拍你、是不是找你有急事）。"
         else:
-            user = f"{poker}{action}你，回一句。"
+            user = f"「{poker}」{action}了你来打招呼或提醒你，请根据你的人设简短随口回一句。"
 
         return [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ]
 
-    @staticmethod
     def _extract_llm_text(result: Any) -> str:
         """从 generate 返回值取出回复文本；失败信封 / 空响应一律返回空串。"""
         if not isinstance(result, dict):

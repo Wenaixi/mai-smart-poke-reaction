@@ -7,10 +7,10 @@ record_self_poke_to_context = true
 [reaction]
 react_probability = 0.9
 back_poke_weight = 0.6
-llm_weight = 0.3
+llm_weight = 0.4
 emoji_weight = 0.15
-text_weight = 0.1
-silent_chat_probability = 0.1
+text_weight = 0.0
+silent_chat_probability = 0.0
 swallow_when_silent = true
 min_delay_seconds = 1.0
 max_delay_seconds = 2.5
@@ -29,29 +29,9 @@ llm_response_style = ""
 llm_context_messages = 8
 
 [fallback]
-normal_replies = [
-    "何意味",
-    "意味何",
-    "干啥",
-    "意何味",
-]
-spam_replies = [
-    "够了",
-    "好烦",
-    "停！手！",
-    "烦不烦",
-    "再戳生气了",
-]
-silent_replies = [
-    "...",
-    "？？？",
-    "，，，",
-    "。",
-    "，",
-    "。。。",
-    "，，，",
-]
-
+normal_replies = []
+spam_replies = []
+silent_replies = []
 [user_control]
 blacklist = []
 ignore_self_poke = true
