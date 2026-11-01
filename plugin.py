@@ -527,7 +527,8 @@ class SmartPokePlugin(MaiBotPlugin):
             if not target_name:
                 target_name = await self.resolve_member_name(ctx.group_id, ctx.target_id)
             target = target_name or ctx.target_id or "群友"
-            text = f"{poker}{action}{target}"
+            suffix = ctx.target_suffix if ctx.target_suffix.startswith("的") else (f"的{ctx.target_suffix}" if ctx.target_suffix else "")
+            text = f"{poker}{action}{target}{suffix}"
 
         await self._append_self_event_to_context(
             stream_id=stream_id, text=text, label="bystander_mutual",

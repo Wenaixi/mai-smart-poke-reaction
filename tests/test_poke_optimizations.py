@@ -109,6 +109,53 @@ async def test_record_bystander_poke_to_context():
 
 
 @pytest.mark.asyncio
+async def test_record_bystander_poke_with_custom_suffix_and_fallback():
+    """验证群友之间互戳带有复杂个性化后缀时，无损记入上下文（覆盖 raw_text 与降级拼接）。"""
+    plugin = SmartPokePlugin()
+    plugin.config = MagicMock()
+    plugin.config.plugin.record_self_poke_to_context = True
+    plugin.ctx = MagicMock()
+    plugin.ctx.logger = MagicMock()
+    plugin.ctx.maisaka = MagicMock()
+    plugin.ctx.maisaka.context = MagicMock()
+    plugin.ctx.maisaka.context.append = AsyncMock(return_value={"success": True, "index": 1})
+    plugin.ctx.chat = MagicMock()
+    plugin.ctx.chat.get_stream_by_group_id = AsyncMock(return_value={"session_id": "stream_group_123"})
+    plugin.resolve_member_name = AsyncMock(return_value="小红")
+
+    # 场景 1：有完整系统原文
+    ctx1 = PokeContext()
+    ctx1.is_group = True
+    ctx1.group_id = "987654"
+    ctx1.raw_text = "小明 拍了拍小红的西瓜，说熟了吗"
+    await plugin.record_bystander_poke_to_context(ctx1)
+    plugin.ctx.maisaka.context.append.assert_called_with(
+        stream_id="stream_group_123",
+        segments=[{"type": "text", "content": "小明 拍了拍小红的西瓜，说熟了吗"}],
+        visible_text="小明 拍了拍小红的西瓜，说熟了吗",
+        source_kind="plugin:smart_poke:bystander_mutual",
+    )
+
+    # 场景 2：无系统原文但有 target_suffix 降级拼接
+    plugin.ctx.maisaka.context.append.reset_mock()
+    ctx2 = PokeContext()
+    ctx2.is_group = True
+    ctx2.group_id = "987654"
+    ctx2.poker_name = "小明"
+    ctx2.target_name = "小红"
+    ctx2.poke_action = "拍了拍"
+    ctx2.target_suffix = "的作业，说都交给我"
+    ctx2.raw_text = ""
+    await plugin.record_bystander_poke_to_context(ctx2)
+    plugin.ctx.maisaka.context.append.assert_called_once_with(
+        stream_id="stream_group_123",
+        segments=[{"type": "text", "content": "小明拍了拍小红的作业，说都交给我"}],
+        visible_text="小明拍了拍小红的作业，说都交给我",
+        source_kind="plugin:smart_poke:bystander_mutual",
+    )
+
+
+@pytest.mark.asyncio
 async def test_handle_send_poke_tool_execution():
     """验证 @Tool('send_poke') 工具方法执行与上下文写入。"""
     plugin = SmartPokePlugin()
