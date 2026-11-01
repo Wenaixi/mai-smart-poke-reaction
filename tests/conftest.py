@@ -24,4 +24,13 @@ if "maibot_sdk.types" not in sys.modules:
     types_mod.ErrorPolicy = type("ErrorPolicy", (), {"SKIP": "skip", "RAISE": "raise"})
     types_mod.HookMode = type("HookMode", (), {"BLOCKING": "blocking", "OBSERVE": "observe"})
     types_mod.HookOrder = type("HookOrder", (), {"EARLY": "early", "NORMAL": "normal", "LATE": "late"})
+    class _TPI:
+        def __init__(self, name="", param_type="string", description="", required=True, enum_values=None):
+            self.name = name
+            self.param_type = param_type
+            self.description = description
+            self.required = required
+            self.enum_values = enum_values or []
+    types_mod.ToolParameterInfo = _TPI
+    types_mod.ToolParamType = type("ToolParamType", (), {"STRING": "string", "INTEGER": "integer", "BOOLEAN": "boolean", "FLOAT": "float", "NUMBER": "number"})
     sys.modules["maibot_sdk.types"] = types_mod

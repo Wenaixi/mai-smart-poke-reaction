@@ -99,67 +99,32 @@ class ReactionExecutor:
         """
         plugin = self._plugin
         try:
-            # 先解析 stream_id 再延迟：避免选了 text/emoji/llm 但 stream_id 解析失败时
-            # 白白等掉几秒思考延迟才回退到回戳。回戳走 send_poke 不依赖 stream_id。
             stream_id = await plugin.resolve_stream_id_for_context(ctx, allow_open=True)
             if not stream_id:
                 plugin.ctx.logger.debug(
-                    "[smart_poke] 无法解析 stream_id (group=%s, poker=%s)，回退到回戳路径",
+                    "[smart_poke] 无法解析 stream_id (group=%s, poker=%s)，回退到底层回戳路径",
                     ctx.group_id, ctx.poker_id,
                 )
-
-            kind = self._decide_reaction_kind(is_spam)
-            if kind in ("emoji", "text", "llm") and not stream_id:
-                kind = "poke"
-
-            # llm 档在 _send_llm_reply 内把思考延迟与生成 gather 并行以吸收延迟，
-            # 不能再走这里的统一前置延迟；其余档保持"先延迟再发"。
-            if kind != "llm":
-                await self._delay_a_bit()
-                # 延迟后、发送前二次确认：本次反应是否已被同一人更晚的戳取代（见 react_token
-                # 说明）。llm 档延迟在 _send_llm_reply 内吸收、其校验下沉到该方法 gather 之后，
-                # 故这里只覆盖 poke/emoji/text。
-                if self._superseded(ctx, react_token, "smart_poke"):
-                    return
-                # 确认未被连戳取代、即将真正发出反应后，才记一条"对方戳了我"作为前因——
-                # 放在 supersede 之后，避免被取代而放弃的连戳任务也各写一条，导致上下文
-                # 堆叠多条"X戳了戳我"（关闭写入上下文时此调用直接返回）。llm 档的同口径
-                # 记录下沉到 _send_llm_reply 的 supersede 校验之后。
-                await plugin.record_poked_by_to_context(ctx)
+                await self._send_back_poke(ctx, is_spam=is_spam, stream_id=stream_id)
+                return
 
             plugin.ctx.logger.info(
-                "[smart_poke] 触发反应: kind=%s, is_spam=%s, poke_count=%d, poker=%s, scene=%s",
-                kind,
+                "[smart_poke] 100%% 触发大模型智能体决策: is_spam=%s, poke_count=%d, poker=%s, scene=%s",
                 is_spam,
                 poke_count,
                 ctx.poker_name or ctx.poker_id,
                 "群聊" if ctx.is_group else "私聊",
             )
 
-            if kind == "poke":
-                await self._send_back_poke(ctx, is_spam=is_spam, stream_id=stream_id)
+            # 彻底拔除死板随机加权抽签，100% 交付给大模型自主决策（支持工具调用与自主静默权 1B）
+            ok = await self._send_llm_reply(ctx, stream_id, is_spam, react_token)
+            if ok:
                 return
 
-            if kind == "emoji":
-                ok = await self._send_emoji(stream_id)
-                if ok:
-                    return
-                plugin.ctx.logger.debug("表情反应未发出，回退到回戳")
+            # 若 LLM 链异常且未被取代，级联保底回戳
+            if not self._superseded(ctx, react_token, "llm"):
+                plugin.ctx.logger.debug("[smart_poke] 大模型决策未完成响应，级联保底回戳 (poker=%s)", ctx.poker_id)
                 await self._send_back_poke(ctx, is_spam=is_spam, stream_id=stream_id)
-                return
-
-            if kind == "llm":
-                ok = await self._send_llm_reply(ctx, stream_id, is_spam, react_token)
-                if ok:
-                    return
-                if self._superseded(ctx, react_token, "llm"):
-                    return
-                plugin.ctx.logger.debug("[smart_poke] LLM 反应未发出，回退到回戳 (poker=%s)", ctx.poker_id)
-                await self._send_back_poke(ctx, is_spam=is_spam, stream_id=stream_id)
-                return
-
-            # 任何其它未知分支一律安全回退到回戳，绝不发送死板固定文字
-            await self._send_back_poke(ctx, is_spam=is_spam, stream_id=stream_id)
         except Exception:
             plugin.ctx.logger.exception("反应戳一戳时出错")
 
@@ -193,29 +158,6 @@ class ReactionExecutor:
             )
             return True
         return False
-
-    def _decide_reaction_kind(self, is_spam: bool) -> str:
-        """按权重抽取反应类型（已彻底移除固定文字回复，只保留 poke / emoji / llm）。"""
-        cfg = self._plugin.config.reaction
-        spam_mult_poke = 1.5 if is_spam else 1.0
-        spam_mult_emoji = 0.3 if is_spam else 1.0
-        spam_mult_llm = 0.8 if is_spam else 1.0
-        weights = {
-            "poke": max(0.0, cfg.back_poke_weight * spam_mult_poke),
-            "emoji": max(0.0, cfg.emoji_weight * spam_mult_emoji),
-            "llm": max(0.0, cfg.llm_weight * spam_mult_llm),
-        }
-        total = sum(weights.values())
-        if total <= 0:
-            return "poke"
-
-        roll = random.random() * total
-        cumulative = 0.0
-        for kind, weight in weights.items():
-            cumulative += weight
-            if roll < cumulative:
-                return kind
-        return "poke"
 
     # ===== 内部：发送实现 =====
 
@@ -338,62 +280,91 @@ class ReactionExecutor:
         hi = max(lo, cfg.max_delay_seconds)
         delay = random.uniform(lo, hi) if hi > 0 else 0.0
 
+        POKE_TOOLS = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "send_poke",
+                    "description": "向当前群聊中戳麦麦的用户发送戳一戳动作（回戳）。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "target_id": {
+                                "type": "string",
+                                "description": "要戳的用户 QQ 号，可留空",
+                            }
+                        },
+                    },
+                },
+            }
+        ]
+
         async def _prepare_and_generate() -> Any:
-            # persona 解析与上下文拉取都是「生成前的准备 RPC」，连同 generate 一起放进
-            # 与思考延迟并行的链里：让这几次 RPC 的耗时也被"装作在思考"的延迟吸收。
-            # （原先 persona/context 在 gather 之前串行，是无法被延迟吸收的纯增延迟；
-            # 二者内部均已 try/except 降级，不会把异常抛进本链，故链里抛出的基本只有
-            # generate 的 RPC 硬异常。）
             persona = await self._resolve_persona()
             context_text = await self._fetch_recent_context(stream_id)
             prompt = self._build_llm_prompt(ctx, is_spam, persona, context_text)
             gen_kwargs: dict[str, Any] = {
                 "prompt": prompt,
                 "temperature": cfg.llm_temperature,
+                "tools": POKE_TOOLS,
             }
             model = cfg.llm_model.strip()
-            # llm_model 只会是 utils/replyer/planner（Literal 约束），本意是模型任务名。
-            # MaiBot 1.2.5 起 SDK 的 model 参数被宿主当作具体模型名，
-            # 任务名必须经 task_name 传递，否则报「未找到名为 'planner' 的模型」。
             if model:
                 gen_kwargs["task_name"] = model
-            # max_tokens=0 表示不覆盖、用 Host 模型配置
             if cfg.llm_max_tokens > 0:
                 gen_kwargs["max_tokens"] = cfg.llm_max_tokens
             return await plugin.ctx.llm.generate(**gen_kwargs)
 
         try:
-            # 思考延迟与「准备+生成」整条链并行：净增延迟 ≈ max(0, 链耗时 − 思考延迟)。
-            # generate 软失败返回 dict(success=False) 时 sleep 仍会正常走完延迟；
-            # 仅 RPC 层硬异常会让 gather 提前抛出，此时直接回退（罕见路径不补延迟）。
             _, result = await asyncio.gather(
                 asyncio.sleep(delay),
                 _prepare_and_generate(),
             )
         except Exception:
-            plugin.ctx.logger.debug("[llm] 生成链调用异常，回退到回复池", exc_info=True)
+            plugin.ctx.logger.debug("[llm] 生成链调用异常，回退到底层回戳", exc_info=True)
             return False
 
+        tool_calls = self._extract_tool_calls(result)
         text = self._extract_llm_text(result)
-        if not text:
-            plugin.ctx.logger.debug("[llm] 生成为空或业务失败，回退到回复池")
+
+        called_send_poke = any(
+            (tc.get("name") in ("send_poke", "poke") if isinstance(tc, dict) else False)
+            or (tc.get("function", {}).get("name") in ("send_poke", "poke") if isinstance(tc, dict) and isinstance(tc.get("function"), dict) else False)
+            for tc in tool_calls
+        )
+
+        # 兼容自然语言内联回戳意图（若小模型直接输出标记）
+        if not called_send_poke and any(marker in text for marker in ("[动作:回戳]", "[回戳]", "[send_poke]")):
+            called_send_poke = True
+            for marker in ("[动作:回戳]", "[回戳]", "[send_poke]"):
+                text = text.replace(marker, "")
+            text = text.strip()
+
+        # 检查是否既无文本也无回戳工具调用
+        if not text and not called_send_poke:
+            plugin.ctx.logger.debug("[llm] 生成既无文本也无回戳工具调用，回退到底层回戳")
             return False
 
-        # gather 已吸收思考延迟，发送前同样做二次确认。被取代时返回 True：这是主动放弃
-        # 而非生成失败，返回 True 可让 react_to_poke 的 `if ok: return` 生效、不触发级联
-        # 回退再补发一条回复池/回戳。
         if self._superseded(ctx, react_token, "llm"):
             return True
 
-        # 确认未被取代、即将真正发出 llm 回复后才记"对方戳了我"前因，与非 llm 档口径一致：
-        # 被连戳取代而放弃的任务不写入。生成失败（上方 return False）的回退发送由
-        # react_to_poke 的 llm 回退分支补记，避免此处漏记前因 / 漏唤醒 runtime。
+        # 确认未被连戳取代，记入"对方戳了我"前因
         await plugin.record_poked_by_to_context(ctx)
 
-        ok = await self._safe_send_text(text, stream_id)
-        if ok:
-            plugin.ctx.logger.info("[llm] 已发送生成回复: %r (is_spam=%s)", text, is_spam)
-        return ok
+        # 执行回戳动作（来自模型决策的工具调用）
+        if called_send_poke:
+            await self._send_back_poke(ctx, is_spam=is_spam, stream_id=stream_id)
+
+        # 发送调侃正文（落实 1B 自主静默权：若模型只调用回戳工具而不发文字，则 text 为空不发消息）
+        if text:
+            ok = await self._safe_send_text(text, stream_id)
+            if ok:
+                plugin.ctx.logger.info("[llm] 已发送生成回复: %r (is_spam=%s, called_poke=%s)", text, is_spam, called_send_poke)
+            return ok
+
+        # 若模型仅调用回戳工具（无文本正文），到此处回戳已完成，直接返回 True（达成 1B 自主静默权）
+        plugin.ctx.logger.info("[llm] 模型选择仅调用 send_poke 回戳而不发文字 (落实自主静默权 1B)")
+        return True
 
     async def _fetch_recent_context(self, stream_id: str) -> str:
         """按 ``reaction.llm_context_messages`` 拉取最近聊天记录并格式化为可读文本。
@@ -407,7 +378,10 @@ class ReactionExecutor:
         绝不影响主回复生成。
         """
         cfg = self._plugin.config.reaction
-        limit = cfg.llm_context_messages
+        try:
+            limit = int(getattr(cfg, "llm_context_messages", 0) or 0)
+        except (ValueError, TypeError):
+            limit = 0
         if limit <= 0 or not stream_id:
             return ""
         ctx = self._plugin.ctx
@@ -435,7 +409,8 @@ class ReactionExecutor:
         故能直接拿到麦麦人设，让戳一戳与主聊天语气一致；读取失败再回落到与 Host
         默认一致的兜底人设。
         """
-        configured = self._plugin.config.reaction.llm_persona.strip()
+        raw_configured = getattr(self._plugin.config.reaction, "llm_persona", "")
+        configured = str(raw_configured or "").strip()
         if configured:
             return configured
         try:
@@ -478,8 +453,11 @@ class ReactionExecutor:
             f"{raw_info_block}"
             f"{personalized_block}"
             f"现在「{poker}」在 {scene}里对你发起了戳一戳。\n"
-            "请根据你的人设自然、轻松、友好地随口回应一句（例如调皮地问怎么啦、接住对方的梗、或亲切打个招呼）。\n"
-            "回复要简短白话（3~20字内），像真人随口回复；只输出回复正文，严禁添加引号、括号、解释或任何前缀。"
+            "你拥有发送戳一戳动作的专属工具「send_poke」。请根据你的人设和当前群聊气氛，自主选择最自然的回应方式：\n"
+            "1. 【随口调侃】：像真人随口回一句话（3~20字内，简短白话，严禁添加引号或括号解释）；\n"
+            "2. 【文字调侃 + 调用 send_poke 回戳】：在随口说话的同时，调用 send_poke 工具回戳对方；\n"
+            "3. 【只回戳不说话】：如果觉得气氛微妙或无需多言，可以只调用 send_poke 工具而不输出任何文字正文；\n"
+            "4. 【只回文字不回戳】：直接输出调侃短句，不调用 send_poke 工具。"
         )
         style = self._plugin.config.reaction.llm_response_style.strip()
         if style:
@@ -501,6 +479,7 @@ class ReactionExecutor:
             {"role": "user", "content": user},
         ]
 
+    @staticmethod
     def _extract_llm_text(result: Any) -> str:
         """从 generate 返回值取出回复文本；失败信封 / 空响应一律返回空串。"""
         if not isinstance(result, dict):
@@ -515,3 +494,15 @@ class ReactionExecutor:
         if len(text) >= 2 and text[0] in "\"'“「『" and text[-1] in "\"'”」』":
             text = text[1:-1].strip()
         return text
+
+    @staticmethod
+    def _extract_tool_calls(result: Any) -> list[dict[str, Any]]:
+        """从 generate 返回值中提取 tool_calls 列表。"""
+        if not isinstance(result, dict):
+            return []
+        calls = result.get("tool_calls") or result.get("tool_call") or result.get("function_call")
+        if isinstance(calls, list):
+            return [c for c in calls if isinstance(c, dict)]
+        if isinstance(calls, dict):
+            return [calls]
+        return []

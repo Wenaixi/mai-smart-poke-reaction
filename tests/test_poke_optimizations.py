@@ -106,3 +106,129 @@ async def test_record_bystander_poke_to_context():
         visible_text="群友甲 拍了拍群友乙",
         source_kind="plugin:smart_poke:bystander_mutual",
     )
+
+
+@pytest.mark.asyncio
+async def test_handle_send_poke_tool_execution():
+    """验证 @Tool('send_poke') 工具方法执行与上下文写入。"""
+    plugin = SmartPokePlugin()
+    plugin.config = MagicMock()
+    plugin.config.plugin.enabled = True
+    plugin.config.plugin.record_self_poke_to_context = True
+    plugin._napcat = MagicMock()
+    plugin._napcat.send_poke = AsyncMock(return_value=True)
+    plugin.resolve_member_name = AsyncMock(return_value="被戳人")
+    plugin.record_self_poke_to_context = AsyncMock()
+
+    res = await plugin.handle_send_poke(
+        target_id="33333",
+        group_id="987654",
+        stream_id="stream_123",
+    )
+    assert res.get("success") is True
+    assert "被戳人" in res.get("content", "")
+    plugin._napcat.send_poke.assert_called_once_with(
+        "33333", "987654", is_group=True, label="tool_send_poke"
+    )
+    plugin.record_self_poke_to_context.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_llm_reply_with_tool_call_silent_1b():
+    """验证 1B 自主静默权：大模型仅调用 send_poke 工具而不输出文字时，回戳执行且不发空消息。"""
+    fake_plugin = MagicMock()
+    fake_plugin.config.reaction.min_delay_seconds = 0.0
+    fake_plugin.config.reaction.max_delay_seconds = 0.0
+    fake_plugin.config.reaction.llm_temperature = 0.7
+    fake_plugin.config.reaction.llm_model = ""
+    fake_plugin.config.reaction.llm_max_tokens = 0
+    fake_plugin.config.reaction.llm_context_messages = 0
+    fake_plugin.config.reaction.llm_persona = ""
+    fake_plugin.config.reaction.llm_response_style = ""
+    fake_plugin.record_poked_by_to_context = AsyncMock()
+
+    # 模拟大模型返回 tool_calls 但没有正文文本
+    fake_result = {
+        "success": True,
+        "response": "",
+        "tool_calls": [{"name": "send_poke", "parameters": {}}]
+    }
+    fake_plugin.ctx.llm.generate = AsyncMock(return_value=fake_result)
+    fake_plugin.ctx.config.get = AsyncMock(return_value="你是一个可爱的猫娘")
+
+    executor = ReactionExecutor(fake_plugin)
+    executor._send_back_poke = AsyncMock(return_value=True)
+    executor._safe_send_text = AsyncMock(return_value=True)
+
+    ctx = PokeContext()
+    ctx.poker_id = "12345"
+    ctx.poker_name = "群友"
+    ctx.is_group = True
+    ctx.group_id = "67890"
+
+    ok = await executor._send_llm_reply(ctx, "stream_test", is_spam=False)
+    assert ok is True
+    # 验证执行了回戳
+    executor._send_back_poke.assert_called_once()
+    # 验证没有发送文字消息（落实 1B 自主静默权）
+    executor._safe_send_text.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_llm_reply_with_text_and_tool_call():
+    """验证图文+回戳联动：大模型既调侃又回戳。"""
+    fake_plugin = MagicMock()
+    fake_plugin.config.reaction.min_delay_seconds = 0.0
+    fake_plugin.config.reaction.max_delay_seconds = 0.0
+    fake_plugin.config.reaction.llm_temperature = 0.7
+    fake_plugin.config.reaction.llm_model = ""
+    fake_plugin.config.reaction.llm_max_tokens = 0
+    fake_plugin.config.reaction.llm_context_messages = 0
+    fake_plugin.config.reaction.llm_persona = ""
+    fake_plugin.config.reaction.llm_response_style = ""
+    fake_plugin.record_poked_by_to_context = AsyncMock()
+
+    fake_result = {
+        "success": True,
+        "response": "干嘛戳我啦！",
+        "tool_calls": [{"name": "send_poke"}]
+    }
+    fake_plugin.ctx.llm.generate = AsyncMock(return_value=fake_result)
+    fake_plugin.ctx.config.get = AsyncMock(return_value="你是一个可爱的猫娘")
+
+    executor = ReactionExecutor(fake_plugin)
+    executor._send_back_poke = AsyncMock(return_value=True)
+    executor._safe_send_text = AsyncMock(return_value=True)
+
+    ctx = PokeContext()
+    ctx.poker_id = "12345"
+    ctx.poker_name = "群友"
+    ctx.is_group = True
+    ctx.group_id = "67890"
+
+    ok = await executor._send_llm_reply(ctx, "stream_test", is_spam=False)
+    assert ok is True
+    # 回戳与文本都正常发出
+    executor._send_back_poke.assert_called_once()
+    executor._safe_send_text.assert_called_once_with("干嘛戳我啦！", "stream_test")
+
+
+@pytest.mark.asyncio
+async def test_cooldown_counter_poke_2b():
+    """验证 2B 冷却期动作反击保底：底层直接回戳打手反击。"""
+    plugin = SmartPokePlugin()
+    plugin._napcat = MagicMock()
+    plugin._napcat.send_poke = AsyncMock(return_value=True)
+    plugin.record_self_poke_to_context = AsyncMock()
+
+    ctx = PokeContext()
+    ctx.poker_id = "55555"
+    ctx.poker_name = "连戳怪"
+    ctx.is_group = True
+    ctx.group_id = "88888"
+
+    await plugin._send_cooldown_counter_poke(ctx)
+    # 验证底层 send_poke 被调用
+    assert plugin._napcat.send_poke.called
+    plugin.record_self_poke_to_context.assert_called_once()
+

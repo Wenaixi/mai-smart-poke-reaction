@@ -21,8 +21,8 @@ import asyncio
 import random
 from typing import Any
 
-from maibot_sdk import HookHandler, MaiBotPlugin
-from maibot_sdk.types import ErrorPolicy, HookMode, HookOrder
+from maibot_sdk import HookHandler, MaiBotPlugin, Tool
+from maibot_sdk.types import ErrorPolicy, HookMode, HookOrder, ToolParameterInfo, ToolParamType
 
 from .core.bystander import BystanderPoker
 from .core.common import PLUGIN_VERSION, PROACTIVE_TASK_QUEUE_LIMIT, extract_onebot_field, to_positive_int
@@ -71,6 +71,66 @@ class SmartPokePlugin(MaiBotPlugin):
         self._reaction = ReactionExecutor(self)
         self._bystander = BystanderPoker(self)
         self._proactive = ProactivePoker(self)
+
+    # ===== Tool 工具组件 =====
+
+    @Tool(
+        "send_poke",
+        chat_scope="group",
+        brief_description="向当前群聊中的指定用户发送戳一戳动作",
+        detailed_description=(
+            "向当前群聊中的某位用户发送戳一戳动作。\n\n"
+            "使用场景：\n"
+            "- 当受到戳一戳互动，想要回戳对方打招呼、还击或调侃时\n"
+            "- 想要通过戳一戳引起某人注意但又不想打字破坏氛围时\n\n"
+            "注意事项：\n"
+            "- 仅支持群聊场景\n"
+            "- target_id：string，可选。要戳的目标用户 QQ 号；留空则默认回戳当前互动对象"
+        ),
+        parameters=[
+            ToolParameterInfo(
+                name="target_id",
+                param_type=ToolParamType.STRING,
+                description="要戳的目标用户 QQ 号（可选，留空则默认回戳当前互动对象）",
+                required=False,
+            ),
+        ],
+    )
+    async def handle_send_poke(
+        self, target_id: str = "", **kwargs: Any
+    ) -> dict[str, Any]:
+        """执行发送戳一戳。大模型根据语境决定是否调用此工具。"""
+        if not self.config.plugin.enabled:
+            return {"success": False, "error": "插件未启用"}
+
+        stream_id: str = str(kwargs.get("stream_id", "") or kwargs.get("chat_id", "") or "")
+        group_id: str = str(kwargs.get("group_id", "")).strip()
+        user_id: str = str(kwargs.get("user_id", "")).strip()
+
+        dest_user_id = str(target_id or "").strip() or user_id
+        if not dest_user_id:
+            return {"success": False, "error": "缺少目标用户 QQ 号"}
+        if not group_id:
+            return {"success": False, "error": "戳一戳工具仅支持群聊场景"}
+
+        ok = await self._napcat.send_poke(
+            dest_user_id,
+            group_id,
+            is_group=True,
+            label="tool_send_poke",
+        )
+        if ok:
+            target_name = await self.resolve_member_name(group_id, dest_user_id)
+            await self.record_self_poke_to_context(
+                label="tool_send_poke",
+                target_id=dest_user_id,
+                target_name=target_name,
+                group_id=group_id,
+                is_group=True,
+                stream_id=stream_id,
+            )
+            return {"success": True, "content": f"已对用户 {target_name or dest_user_id} 发送戳一戳"}
+        return {"success": False, "error": "发送戳一戳底层调用失败"}
 
     # ===== 生命周期 =====
 
@@ -468,6 +528,33 @@ class SmartPokePlugin(MaiBotPlugin):
             stream_id=stream_id, text=text, label="bystander_mutual",
         )
 
+    async def _send_cooldown_counter_poke(self, ctx: PokeContext) -> None:
+        """冷却期内动作反击保底 (2B)：同一人在冷却期内连戳，不调大模型，底层快速回戳 1~2 次打手反击。"""
+        try:
+            times = random.randint(1, 2)
+            for i in range(times):
+                ok = await self._napcat.send_poke(
+                    ctx.poker_id,
+                    ctx.group_id,
+                    is_group=ctx.is_group,
+                    label="cooldown_counter_poke",
+                )
+                if not ok:
+                    break
+                if i < times - 1:
+                    await asyncio.sleep(0.35)
+            # 记录到 Maisaka 上下文
+            await self.record_self_poke_to_context(
+                label="cooldown_counter_poke",
+                target_id=ctx.poker_id,
+                target_name=ctx.poker_name,
+                group_id=ctx.group_id,
+                is_group=ctx.is_group,
+                stream_id=ctx.stream_id,
+            )
+        except Exception:
+            self.ctx.logger.debug("冷却期反击戳失败", exc_info=True)
+
     # ===== Hook 入口 =====
 
     @HookHandler(
@@ -536,8 +623,13 @@ class SmartPokePlugin(MaiBotPlugin):
             ctx.cooldown_key, ctx.poker_id, self.config.reaction.cooldown_seconds
         ):
             self.ctx.logger.debug(
-                "[%s:%s] 戳一戳冷却中，已拦截",
+                "[%s:%s] 戳一戳处于冷却期，触发直接动作反击打手保底 (2B)",
                 ctx.cooldown_key, ctx.poker_id,
+            )
+            # 落实 2B：冷却期内不调大模型，底层快速回戳 1~2 次打手反击，防刷且绝不装死
+            self._spawn_background_task(
+                self._send_cooldown_counter_poke(ctx),
+                "cooldown_counter_poke",
             )
             return {"action": "abort"}
 
@@ -552,18 +644,7 @@ class SmartPokePlugin(MaiBotPlugin):
                 )
                 return {"action": "abort"}
 
-        if random.random() > self.config.reaction.react_probability:
-            self.ctx.logger.debug(
-                "[%s] 戳一戳触发概率未命中，静默拦截", ctx.cooldown_key or ctx.poker_id
-            )
-            chat_prob = self.config.reaction.silent_chat_probability
-            if chat_prob > 0 and random.random() < chat_prob:
-                self._spawn_background_task(self._reaction.silent_reply(ctx), "silent_reply")
-                return {"action": "abort"}
-            if self.config.reaction.swallow_when_silent:
-                return {"action": "abort"}
-            return None
-
+        # 彻底拔除随机抛硬币：只要通过门禁，100% 触发大模型智能体深度决策
         # 接住 mark 返回的时间戳令牌透传给后台反应：当 max_delay_seconds > cooldown_seconds
         # 时，同一人在思考延迟窗口内再戳会派发新的反应任务，react_to_poke 据此在发送前
         # 确认自己未被更晚的反应取代，避免叠加回复。
