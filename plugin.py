@@ -493,9 +493,14 @@ class SmartPokePlugin(MaiBotPlugin):
                 "[poked] 无法解析 stream_id，跳过被戳事件注入 (poker=%s)", ctx.poker_id,
             )
             return
-        poker = (ctx.poker_name or "").strip() or ctx.poker_id or "对方"
-        action = (ctx.poke_action or "").strip() or "戳了戳"
-        text = f"{poker}{action}我"
+        if ctx.raw_text:
+            text = ctx.raw_text
+        else:
+            poker = (ctx.poker_name or "").strip() or ctx.poker_id or "对方"
+            action = (ctx.poke_action or "").strip() or "戳了戳"
+            suffix = f"的{ctx.my_suffix}" if ctx.my_suffix else ""
+            text = f"{poker}{action}我{suffix}"
+
         await self._append_self_event_to_context(
             stream_id=stream_id, text=text, label="poked",
         )
