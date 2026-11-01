@@ -440,6 +440,34 @@ class SmartPokePlugin(MaiBotPlugin):
             stream_id=stream_id, text=text, label="poked",
         )
 
+    async def record_bystander_poke_to_context(self, ctx: PokeContext) -> None:
+        """把群友之间的互戳事件（麦麦未跟风或跟风前）追加到当前群聊天流的 Maisaka 上下文。"""
+        if not self.config.plugin.record_self_poke_to_context:
+            return
+        if not ctx.is_group or not ctx.group_id:
+            return
+        stream_id = await self.resolve_stream_id_for_context(ctx)
+        if not stream_id:
+            self.ctx.logger.debug(
+                "[bystander_mutual] 无法解析 stream_id，跳过群友互戳事件注入 (group=%s)", ctx.group_id,
+            )
+            return
+
+        if ctx.raw_text:
+            text = ctx.raw_text
+        else:
+            poker = (ctx.poker_name or "").strip() or ctx.poker_id or "群友"
+            action = (ctx.poke_action or "").strip() or "戳了戳"
+            target_name = (ctx.target_name or "").strip()
+            if not target_name:
+                target_name = await self.resolve_member_name(ctx.group_id, ctx.target_id)
+            target = target_name or ctx.target_id or "群友"
+            text = f"{poker}{action}{target}"
+
+        await self._append_self_event_to_context(
+            stream_id=stream_id, text=text, label="bystander_mutual",
+        )
+
     # ===== Hook 入口 =====
 
     @HookHandler(
@@ -474,6 +502,7 @@ class SmartPokePlugin(MaiBotPlugin):
             # 多次连续回戳产生的 n 倍回声逐一走完整套检查的开销
             if ctx.poker_id == ctx.self_id:
                 return None
+            await self.record_bystander_poke_to_context(ctx)
             triggered = self._bystander.maybe_trigger(ctx)
             if triggered and self.config.bystander.swallow_event:
                 return {"action": "abort"}

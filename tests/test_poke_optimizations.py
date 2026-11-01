@@ -1,7 +1,7 @@
 from types import SimpleNamespace
-from TAIY2020_smart_poke_plugin.core.state import PokeContext
-from TAIY2020_smart_poke_plugin.core.reaction import ReactionExecutor
-from TAIY2020_smart_poke_plugin.plugin import SmartPokePlugin
+from wenaixi_mai_smart_poke_reaction.core.state import PokeContext
+from wenaixi_mai_smart_poke_reaction.core.reaction import ReactionExecutor
+from wenaixi_mai_smart_poke_reaction.plugin import SmartPokePlugin
 
 
 def test_parse_poke_details_with_full_personalized_suffixes():
@@ -67,3 +67,42 @@ def test_build_llm_prompt_injects_personalized_raw_text_and_my_suffix():
     # 验证包含动作修饰
     assert "【动作修饰】" in system_prompt
     assert "欢迎加入信息社生活部!" in system_prompt
+
+
+import pytest
+from unittest.mock import AsyncMock, MagicMock
+
+@pytest.mark.asyncio
+async def test_record_bystander_poke_to_context():
+    """验证群友之间互戳（麦麦未参与/跟风前）能正确记录到 Maisaka 上下文。"""
+    plugin = SmartPokePlugin()
+    plugin.config = MagicMock()
+    plugin.config.plugin = MagicMock()
+    plugin.config.plugin.record_self_poke_to_context = True
+    plugin.ctx = MagicMock()
+    plugin.ctx.logger = MagicMock()
+    plugin.ctx.maisaka = MagicMock()
+    plugin.ctx.maisaka.context = MagicMock()
+    plugin.ctx.maisaka.context.append = AsyncMock(return_value={"success": True, "index": 1})
+    plugin.ctx.chat = MagicMock()
+    plugin.ctx.chat.get_stream_by_group_id = AsyncMock(return_value={"session_id": "stream_group_123"})
+
+    ctx = PokeContext()
+    ctx.is_group = True
+    ctx.group_id = "987654"
+    ctx.poker_id = "11111"
+    ctx.poker_name = "群友甲"
+    ctx.target_id = "22222"
+    ctx.target_name = "群友乙"
+    ctx.poke_action = "拍了拍"
+    ctx.raw_text = "群友甲 拍了拍群友乙"
+
+    # 执行注入
+    await plugin.record_bystander_poke_to_context(ctx)
+
+    plugin.ctx.maisaka.context.append.assert_called_once_with(
+        stream_id="stream_group_123",
+        segments=[{"type": "text", "content": "群友甲 拍了拍群友乙"}],
+        visible_text="群友甲 拍了拍群友乙",
+        source_kind="plugin:smart_poke:bystander_mutual",
+    )
