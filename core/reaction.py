@@ -285,13 +285,13 @@ class ReactionExecutor:
                 "type": "function",
                 "function": {
                     "name": "send_poke",
-                    "description": "向当前群聊中戳麦麦的用户发送戳一戳动作（回戳）。",
+                    "description": "向当前群聊中戳麦麦的用户发送 QQ 官方戳一戳互动动作（用于趣味打招呼、提醒对方、反击或随口逗趣，非物理触碰）。",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "target_id": {
                                 "type": "string",
-                                "description": "要戳的用户 QQ 号，可留空",
+                                "description": "要戳的用户 QQ 号，可留空（默认回戳当前互动对象）",
                             }
                         },
                     },
@@ -448,8 +448,8 @@ class ReactionExecutor:
 
         system = (
             f"{persona}\n\n"
-            f"【功能认知】在 QQ {scene}中，「戳一戳」（双击对方头像，系统提示「{poker} {action}了你」）只是 QQ 里的一个轻量社交互动小功能，"
-            "没有任何身体接触或恶意攻击意味，常带有各种搞笑有趣的个性化动作与词缀。\n"
+            f"【功能认知】在 QQ {scene}中，「戳一戳」（双击对方头像，系统提示「{poker} {action}了你」）并不是真实的身体接触，只是 QQ 里的一个轻量趣味互动功能，用来提醒对方或友好打招呼，常带有搞笑有趣的个性化部位或词缀。"
+            "使用「send_poke」工具即可实现这个互动（回戳对方）。\n"
             f"{raw_info_block}"
             f"{personalized_block}"
             f"现在「{poker}」在 {scene}里对你发起了戳一戳。\n"
@@ -469,10 +469,11 @@ class ReactionExecutor:
             )
 
         notice_hint = f"（系统原文：{ctx.raw_text}）" if ctx.raw_text else f"（动作：{action}）"
+        function_hint = "（QQ轻量互动，非物理触碰，使用 send_poke 工具互动）"
         if is_spam:
-            user = f"「{poker}」连续多次{action}你{notice_hint}，请根据你的人设简短随口回一句（比如调侃怎么连着拍你、是不是找你有急事）。"
+            user = f"「{poker}」连续多次{action}你{notice_hint}{function_hint}，请根据你的人设简短随口回一句（比如调侃怎么连着拍你、是不是找你有急事）。"
         else:
-            user = f"「{poker}」在{scene}里对你发起戳一戳{notice_hint}，请根据你的人设简短随口回一句。"
+            user = f"「{poker}」在{scene}里对你发起戳一戳{notice_hint}{function_hint}，请根据你的人设简短随口回一句。"
 
         return [
             {"role": "system", "content": system},

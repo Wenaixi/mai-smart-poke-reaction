@@ -77,21 +77,29 @@ class SmartPokePlugin(MaiBotPlugin):
     @Tool(
         "send_poke",
         chat_scope="group",
-        brief_description="向当前群聊中的指定用户发送戳一戳动作",
+        brief_description="对群聊中的指定成员发送 QQ 戳一戳互动动作（用于打招呼、互动接梗或反击回戳）",
         detailed_description=(
-            "向当前群聊中的某位用户发送戳一戳动作。\n\n"
-            "使用场景：\n"
-            "- 当受到戳一戳互动，想要回戳对方打招呼、还击或调侃时\n"
-            "- 想要通过戳一戳引起某人注意但又不想打字破坏氛围时\n\n"
-            "注意事项：\n"
-            "- 仅支持群聊场景\n"
-            "- target_id：string，可选。要戳的目标用户 QQ 号；留空则默认回戳当前互动对象"
+            "【功能定位】\n"
+            "本工具用于在当前 QQ 群聊中向指定成员发送官方『戳一戳』轻量社交动作（等同于在 QQ 客户端双击对方头像）。\n\n"
+            "【认知与特性】\n"
+            "- 戳一戳是 QQ 平台的一种趣味互动通知，用于轻量提醒、打招呼、接梗互动或朋友间的逗趣打闹，不包含任何真实的身体接触或恶意攻击意味。\n"
+            "- 当收到他人的戳一戳时，如果你想表示回应、互动还击、或者引起对方注意，应优先调用本工具进行回戳。\n"
+            "- 本工具既可以配合你的文字调侃一同发出（边调侃边回戳），也可以单独调用而不输出任何文字（无声回戳，展现高冷、无奈或默契氛围）。\n\n"
+            "【使用场景】\n"
+            "1. 对方戳了你，你想要反击、打招呼或随口逗趣互动时；\n"
+            "2. 群聊中想要提醒某人、或参与群友之间的戳一戳打闹时；\n"
+            "3. 对方频繁连续戳你，你想快速反拍对方时。\n\n"
+            "【参数说明】\n"
+            "- target_id (string, 可选): 要戳的目标用户 QQ 号。留空则默认回戳当前互动对象或触发者。\n\n"
+            "【注意事项】\n"
+            "- 仅支持群聊场景；私聊环境不支持也不暴露此工具。\n"
+            "- 调用成功后会自动向群内发送戳一戳，并在会话上下文中同步记录你的回戳行为。"
         ),
         parameters=[
             ToolParameterInfo(
                 name="target_id",
                 param_type=ToolParamType.STRING,
-                description="要戳的目标用户 QQ 号（可选，留空则默认回戳当前互动对象）",
+                description="要戳的目标用户 QQ 号（可选，留空则默认回戳当前互动对象或触发者）",
                 required=False,
             ),
         ],
@@ -471,7 +479,7 @@ class SmartPokePlugin(MaiBotPlugin):
         display_name = (target_name or "").strip() or target_id
         # 用 QQ 原生戳一戳提示风格融入上下文，而非生硬的「系统事件」旁白；
         # 整个 prompt 里 LLM 扮演麦麦，"我"即指麦麦，与"X戳了戳我"成对、语义清晰。
-        text = f"我戳了戳{display_name}"
+        text = f"我戳了戳{display_name}（通过 send_poke 工具执行的QQ轻量互动）"
 
         await self._append_self_event_to_context(
             stream_id=stream_id, text=text, label=label,
@@ -494,12 +502,14 @@ class SmartPokePlugin(MaiBotPlugin):
             )
             return
         if ctx.raw_text:
-            text = ctx.raw_text
+            raw_content = ctx.raw_text
         else:
             poker = (ctx.poker_name or "").strip() or ctx.poker_id or "对方"
             action = (ctx.poke_action or "").strip() or "戳了戳"
             suffix = f"的{ctx.my_suffix}" if ctx.my_suffix else ""
-            text = f"{poker}{action}我{suffix}"
+            raw_content = f"{poker}{action}我{suffix}"
+
+        text = f"{raw_content}（QQ轻量互动，非物理触碰，使用 send_poke 工具互动）"
 
         await self._append_self_event_to_context(
             stream_id=stream_id, text=text, label="poked",
@@ -519,7 +529,7 @@ class SmartPokePlugin(MaiBotPlugin):
             return
 
         if ctx.raw_text:
-            text = ctx.raw_text
+            raw_content = ctx.raw_text
         else:
             poker = (ctx.poker_name or "").strip() or ctx.poker_id or "群友"
             action = (ctx.poke_action or "").strip() or "戳了戳"
@@ -528,7 +538,9 @@ class SmartPokePlugin(MaiBotPlugin):
                 target_name = await self.resolve_member_name(ctx.group_id, ctx.target_id)
             target = target_name or ctx.target_id or "群友"
             suffix = ctx.target_suffix if ctx.target_suffix.startswith("的") else (f"的{ctx.target_suffix}" if ctx.target_suffix else "")
-            text = f"{poker}{action}{target}{suffix}"
+            raw_content = f"{poker}{action}{target}{suffix}"
+
+        text = f"{raw_content}（QQ轻量互动，非物理触碰）"
 
         await self._append_self_event_to_context(
             stream_id=stream_id, text=text, label="bystander_mutual",

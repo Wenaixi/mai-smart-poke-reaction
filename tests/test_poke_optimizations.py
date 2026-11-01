@@ -102,8 +102,8 @@ async def test_record_bystander_poke_to_context():
 
     plugin.ctx.maisaka.context.append.assert_called_once_with(
         stream_id="stream_group_123",
-        segments=[{"type": "text", "content": "群友甲 拍了拍群友乙"}],
-        visible_text="群友甲 拍了拍群友乙",
+        segments=[{"type": "text", "content": "群友甲 拍了拍群友乙（QQ轻量互动，非物理触碰）"}],
+        visible_text="群友甲 拍了拍群友乙（QQ轻量互动，非物理触碰）",
         source_kind="plugin:smart_poke:bystander_mutual",
     )
 
@@ -131,8 +131,8 @@ async def test_record_bystander_poke_with_custom_suffix_and_fallback():
     await plugin.record_bystander_poke_to_context(ctx1)
     plugin.ctx.maisaka.context.append.assert_called_with(
         stream_id="stream_group_123",
-        segments=[{"type": "text", "content": "小明 拍了拍小红的西瓜，说熟了吗"}],
-        visible_text="小明 拍了拍小红的西瓜，说熟了吗",
+        segments=[{"type": "text", "content": "小明 拍了拍小红的西瓜，说熟了吗（QQ轻量互动，非物理触碰）"}],
+        visible_text="小明 拍了拍小红的西瓜，说熟了吗（QQ轻量互动，非物理触碰）",
         source_kind="plugin:smart_poke:bystander_mutual",
     )
 
@@ -149,8 +149,8 @@ async def test_record_bystander_poke_with_custom_suffix_and_fallback():
     await plugin.record_bystander_poke_to_context(ctx2)
     plugin.ctx.maisaka.context.append.assert_called_once_with(
         stream_id="stream_group_123",
-        segments=[{"type": "text", "content": "小明拍了拍小红的作业，说都交给我"}],
-        visible_text="小明拍了拍小红的作业，说都交给我",
+        segments=[{"type": "text", "content": "小明拍了拍小红的作业，说都交给我（QQ轻量互动，非物理触碰）"}],
+        visible_text="小明拍了拍小红的作业，说都交给我（QQ轻量互动，非物理触碰）",
         source_kind="plugin:smart_poke:bystander_mutual",
     )
 
