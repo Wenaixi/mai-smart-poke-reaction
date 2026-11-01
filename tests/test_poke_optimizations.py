@@ -279,3 +279,74 @@ async def test_cooldown_counter_poke_2b():
     assert plugin._napcat.send_poke.called
     plugin.record_self_poke_to_context.assert_called_once()
 
+
+def test_parse_poke_details_adaptive_verbs_and_custom_suffixes():
+    """验证自适应算法能无损解析『掐一掐/拍一拍/咬了一口/给了一拳』等任意动词与后缀。"""
+    # 用例 1：带前缀的「掐一掐」
+    payload1 = {
+        "user_id": "10001",
+        "target_id": "3843894500",
+        "self_id": "3843894500",
+        "raw_info": [
+            {"type": "qq", "txt": "张三 "},
+            {"type": "nor", "txt": "突然跑过来"},
+            {"type": "nor", "txt": "掐一掐"},
+            {"type": "qq", "txt": "麦麦"},
+            {"type": "nor", "txt": "的小脸蛋"},
+        ],
+    }
+    raw1, prefix1, verb1, full1, suffix1 = SmartPokePlugin._parse_poke_details(payload1)
+    assert "张三" in raw1 and "掐一掐" in raw1 and "小脸蛋" in raw1
+    assert prefix1 == "突然跑过来"
+    assert verb1 == "掐一掐"
+    assert suffix1 == "的小脸蛋"
+
+    # 用例 2：「拍一拍」+ 主人的个性后缀
+    payload2 = {
+        "user_id": "10001",
+        "target_id": "3843894500",
+        "self_id": "3843894500",
+        "raw_info": [
+            {"type": "qq", "txt": "主人 "},
+            {"type": "nor", "txt": "拍一拍"},
+            {"type": "qq", "txt": "小小麦"},
+            {"type": "nor", "txt": "的作业，说都交给我"},
+        ],
+    }
+    raw2, prefix2, verb2, full2, suffix2 = SmartPokePlugin._parse_poke_details(payload2)
+    assert verb2 == "拍一拍"
+    assert suffix2 == "的作业，说都交给我"
+
+    # 用例 3：「咬了一口」
+    payload3 = {
+        "user_id": "20002",
+        "target_id": "3843894500",
+        "self_id": "3843894500",
+        "raw_info": [
+            {"type": "qq", "txt": "小李 "},
+            {"type": "nor", "txt": "咬了一口"},
+            {"type": "qq", "txt": "麦麦"},
+            {"type": "nor", "txt": "的奶茶"},
+        ],
+    }
+    raw3, prefix3, verb3, full3, suffix3 = SmartPokePlugin._parse_poke_details(payload3)
+    assert verb3 == "咬了一口"
+    assert suffix3 == "的奶茶"
+
+    # 用例 4：生僻第三方动作「给了一拳」
+    payload4 = {
+        "user_id": "30003",
+        "target_id": "40004",
+        "self_id": "3843894500",
+        "raw_info": [
+            {"type": "qq", "txt": "小赵 "},
+            {"type": "nor", "txt": "给了一拳"},
+            {"type": "qq", "txt": "小周"},
+            {"type": "nor", "txt": "的胸口"},
+        ],
+    }
+    raw4, prefix4, verb4, full4, suffix4 = SmartPokePlugin._parse_poke_details(payload4)
+    assert verb4 == "给了一拳"
+    assert suffix4 == "的胸口"
+
+

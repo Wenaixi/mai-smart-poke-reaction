@@ -507,7 +507,7 @@ class SmartPokePlugin(MaiBotPlugin):
             poker = (ctx.poker_name or "").strip() or ctx.poker_id or "对方"
             action = (ctx.poke_action or "").strip() or "戳了戳"
             suffix = f"的{ctx.my_suffix}" if ctx.my_suffix else ""
-            raw_content = f"{poker}{action}我{suffix}"
+            raw_content = f"{poker}{action}你{suffix}"
 
         text = f"{raw_content}（QQ轻量互动，非物理触碰，使用 send_poke 工具互动）"
 
@@ -795,6 +795,62 @@ class SmartPokePlugin(MaiBotPlugin):
             for item in raw_info if isinstance(item, dict)
         ).strip()
 
+        # 核心全量动词库：覆盖 QQ 官方默认、变体（一/了）及全量趣味动词
+        verbs = (
+            "拍了拍", "拍一拍", "戳了戳", "戳一戳", "揉了揉", "揉一揉",
+            "捏了捏", "捏一捏", "掐了掐", "掐一掐", "弹了弹", "弹一弹",
+            "抱了抱", "抱一抱", "抱抱", "摸了摸", "摸一摸", "蹭了蹭",
+            "亲了亲", "亲亲", "贴了贴", "咬了一口", "咬了咬", "扯了扯",
+            "踢了踢", "撞了撞", "锤了锤", "打了一拳", "推了推"
+        )
+
+        # 策略一：基于 QQ 实体分段位置锚定（双 qq 节点天然界定：poker -> 动作区 -> target -> 后缀区）
+        qq_indices = [
+            i for i, item in enumerate(raw_info)
+            if isinstance(item, dict) and item.get("type") == "qq"
+        ]
+
+        if len(qq_indices) >= 2:
+            poker_idx = qq_indices[0]
+            target_idx = qq_indices[1]
+
+            action_items = [
+                str(item.get("txt") or item.get("text") or "").strip()
+                for item in raw_info[poker_idx + 1 : target_idx]
+                if isinstance(item, dict) and item.get("type") == "nor"
+            ]
+            action_items = [it for it in action_items if it]
+
+            suffix_items = [
+                str(item.get("txt") or item.get("text") or "").strip()
+                for item in raw_info[target_idx + 1 :]
+                if isinstance(item, dict) and item.get("type") == "nor"
+            ]
+            target_suffix = "".join(suffix_items).strip()
+
+            action_prefix = ""
+            action_verb = "戳了戳"
+
+            if action_items:
+                verb_idx = -1
+                for idx, item in enumerate(action_items):
+                    if any(v in item for v in verbs):
+                        verb_idx = idx
+                        action_verb = item
+                        break
+
+                if verb_idx != -1:
+                    if verb_idx > 0:
+                        action_prefix = " ".join(action_items[:verb_idx]).strip()
+                else:
+                    action_verb = action_items[-1]
+                    if len(action_items) > 1:
+                        action_prefix = " ".join(action_items[:-1]).strip()
+
+            full_action = f"{action_prefix} {action_verb}".strip() if action_prefix else action_verb
+            return raw_text, action_prefix, action_verb, full_action, target_suffix
+
+        # 策略二：降级保障（当缺少标准双 QQ 节点分段时的增强型文本扫描）
         nor_items = [
             str(item.get("txt") or item.get("text") or "").strip()
             for item in raw_info if isinstance(item, dict) and item.get("type") == "nor"
@@ -804,7 +860,6 @@ class SmartPokePlugin(MaiBotPlugin):
         action_verb = "戳了戳"
         target_suffix = ""
 
-        verbs = ("拍了拍", "戳了戳", "揉了揉", "捏了捏", "弹了弹", "抱了抱", "摸了摸")
         verb_idx = -1
         for idx, item in enumerate(nor_items):
             if any(v in item for v in verbs):
