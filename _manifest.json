@@ -37,7 +37,8 @@
     "message.build_readable",
     "maisaka.context.append",
     "llm.generate",
-    "config.get"
+    "config.get",
+    "llm.generate_with_tools"
   ],
   "i18n": {
     "default_locale": "zh-CN",

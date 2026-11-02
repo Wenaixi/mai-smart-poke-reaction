@@ -306,6 +306,9 @@ class ReactionExecutor:
                 gen_kwargs["task_name"] = model
             if cfg.llm_max_tokens > 0:
                 gen_kwargs["max_tokens"] = cfg.llm_max_tokens
+            # 核心修复：优先调用 SDK 官方带工具生成接口 generate_with_tools，确保 tools 真正下发给大模型 API
+            if hasattr(plugin.ctx.llm, "generate_with_tools"):
+                return await plugin.ctx.llm.generate_with_tools(**gen_kwargs)
             return await plugin.ctx.llm.generate(**gen_kwargs)
 
         try:
@@ -445,11 +448,11 @@ class ReactionExecutor:
             f"{raw_info_block}"
             f"{personalized_block}"
             f"现在「{poker}」在 {scene}里随手戳了你一下。\n"
-            "你有完全自主的决定权，不要每次都一本正经回复，反应不要太大：\n"
-            "1. 【淡定不理睬】：完全可以不理睬（直接输出空内容，假装没看见，不发文字也不回戳）；\n"
-            "2. 【随手回戳】：如果想打招呼或随手互动，在后台调用「send_poke」工具即可；\n"
-            "3. 【淡定随口调侃】：若当前聊天氛围适合且有话想说，随口回一句极简口语（3~15字内，像真人一样淡定随和，严禁大惊小怪或质问）；\n"
-            "4. 想要回戳直接在后台调用工具即可，严禁在回复文字中添加『（回戳）』或任何动作括号旁白！"
+            "你有完全自主的决定权，反应不要太大，不要每次都回复：\n"
+            "- 如果觉得无聊或不想理睬，直接输出空内容，假装没看见，不发文字也不回戳；\n"
+            "- 如果想随手互动回戳，请在后台直接调用工具「send_poke」；\n"
+            "- 如果当前气氛适合且想调侃，随口回一句极简口语（3~15字内，像真人一样自然随和）；\n"
+            "- 严禁在回复文字中出现“（回戳）”、“（调用 send_poke 回戳）”或任何关于工具的括号旁白说明，回复文字只能是对群友说的大白话！"
         )
         style = self._plugin.config.reaction.llm_response_style.strip()
         if style:

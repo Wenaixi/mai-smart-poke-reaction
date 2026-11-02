@@ -201,6 +201,7 @@ async def test_llm_reply_with_tool_call_silent_1b():
         "tool_calls": [{"name": "send_poke", "parameters": {}}]
     }
     fake_plugin.ctx.llm.generate = AsyncMock(return_value=fake_result)
+    fake_plugin.ctx.llm.generate_with_tools = AsyncMock(return_value=fake_result)
     fake_plugin.ctx.config.get = AsyncMock(return_value="你是一个可爱的猫娘")
 
     executor = ReactionExecutor(fake_plugin)
@@ -241,6 +242,7 @@ async def test_llm_reply_with_text_and_tool_call():
         "tool_calls": [{"name": "send_poke"}]
     }
     fake_plugin.ctx.llm.generate = AsyncMock(return_value=fake_result)
+    fake_plugin.ctx.llm.generate_with_tools = AsyncMock(return_value=fake_result)
     fake_plugin.ctx.config.get = AsyncMock(return_value="你是一个可爱的猫娘")
 
     executor = ReactionExecutor(fake_plugin)
