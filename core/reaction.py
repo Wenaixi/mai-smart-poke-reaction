@@ -103,29 +103,21 @@ class ReactionExecutor:
             stream_id = await plugin.resolve_stream_id_for_context(ctx, allow_open=True)
             if not stream_id:
                 plugin.ctx.logger.debug(
-                    "[smart_poke] 无法解析 stream_id (group=%s, poker=%s)，回退到底层回戳路径",
+                    "[smart_poke] 无法解析 stream_id (group=%s, poker=%s)，静默放弃响应",
                     ctx.group_id, ctx.poker_id,
                 )
-                await self._send_back_poke(ctx, is_spam=is_spam, stream_id=stream_id)
                 return
 
             plugin.ctx.logger.info(
-                "[smart_poke] 100%% 触发大模型智能体决策: is_spam=%s, poke_count=%d, poker=%s, scene=%s",
+                "[smart_poke] 交付大模型智能体自主决策: is_spam=%s, poke_count=%d, poker=%s, scene=%s",
                 is_spam,
                 poke_count,
                 ctx.poker_name or ctx.poker_id,
                 "群聊" if ctx.is_group else "私聊",
             )
 
-            # 彻底拔除死板随机加权抽签，100% 交付给大模型自主决策（支持工具调用与自主静默权 1B）
-            ok = await self._send_llm_reply(ctx, stream_id, is_spam, react_token)
-            if ok:
-                return
-
-            # 若 LLM 链异常且未被取代，级联保底回戳
-            if not self._superseded(ctx, react_token, "llm"):
-                plugin.ctx.logger.debug("[smart_poke] 大模型决策未完成响应，级联保底回戳 (poker=%s)", ctx.poker_id)
-                await self._send_back_poke(ctx, is_spam=is_spam, stream_id=stream_id)
+            # 彻底拔除死板随机加权抽签与百分百强制回戳：完全交付大模型自主心智决策（支持说话、回戳、无声回戳、或淡定不理睬）
+            await self._send_llm_reply(ctx, stream_id, is_spam, react_token)
         except Exception:
             plugin.ctx.logger.exception("反应戳一戳时出错")
 
