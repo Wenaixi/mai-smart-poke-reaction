@@ -72,42 +72,88 @@ class SmartPokePlugin(MaiBotPlugin):
         self._bystander = BystanderPoker(self)
         self._proactive = ProactivePoker(self)
 
-    # ===== 戳一戳内部处理方法（不重复注册全局 @Tool，避免与适配器冲突） =====
+    # ===== Tool 工具组件（供 Planner 与聊天流程检索与精确调用） =====
 
+    @Tool(
+        "send_poke",
+        brief_description="对群聊成员或私聊好友发送 QQ 官方戳一戳互动动作（支持多次连戳）",
+        detailed_description=(
+            "【功能定位】\n"
+            "在当前群聊或私聊会话中，对指定用户发送 QQ 官方戳一戳动作（等同于在 QQ 双击对方头像）。\n\n"
+            "【适用场景】\n"
+            "1. 用户在聊天中明确要求你戳他、回戳或连戳他若干次时（如“戳我3次”）；\n"
+            "2. 想要通过戳一戳友好打招呼、提醒对方、反击或随手逗趣互动；\n"
+            "3. 群聊与私聊环境均全面支持。\n\n"
+            "【参数说明】\n"
+            "- target_id (string, 可选): 要戳的目标用户 QQ 号。留空则自动戳当前说话的聊天对象。\n"
+            "- times (integer, 可选): 连续发送戳一戳的次数。默认为 1，上限为 5 次。\n\n"
+            "【重要规范】\n"
+            "调用此工具即可在后台执行发戳动作并自动记入会话上下文；无需在后续回复的文字消息中输出“（回戳）”等动作括号。"
+        ),
+        parameters=[
+            ToolParameterInfo(
+                name="target_id",
+                param_type=ToolParamType.STRING,
+                description="要戳的目标用户 QQ 号（可选，留空则默认戳当前聊天对象）",
+                required=False,
+            ),
+            ToolParameterInfo(
+                name="times",
+                param_type=ToolParamType.INTEGER,
+                description="发送戳一戳的次数（可选，默认 1 次，上限 5 次）",
+                required=False,
+            ),
+        ],
+    )
     async def handle_send_poke(
-        self, target_id: str = "", **kwargs: Any
+        self, target_id: str = "", times: int = 1, **kwargs: Any
     ) -> dict[str, Any]:
-        """执行发送戳一戳。大模型根据语境决定是否调用此工具。"""
+        """执行发送戳一戳。可在群聊或私聊中被 Planner 工具检索与精确调用。"""
         if not self.config.plugin.enabled:
             return {"success": False, "error": "插件未启用"}
 
         stream_id: str = str(kwargs.get("stream_id", "") or kwargs.get("chat_id", "") or "")
         group_id: str = str(kwargs.get("group_id", "")).strip()
-        user_id: str = str(kwargs.get("user_id", "")).strip()
+        user_id: str = str(kwargs.get("user_id", "") or kwargs.get("sender_id", "")).strip()
 
         dest_user_id = str(target_id or "").strip() or user_id
         if not dest_user_id:
             return {"success": False, "error": "缺少目标用户 QQ 号"}
-        if not group_id:
-            return {"success": False, "error": "戳一戳工具仅支持群聊场景"}
 
-        ok = await self._napcat.send_poke(
-            dest_user_id,
-            group_id,
-            is_group=True,
-            label="tool_send_poke",
-        )
-        if ok:
-            target_name = await self.resolve_member_name(group_id, dest_user_id)
+        is_group = bool(group_id and group_id != "0")
+        try:
+            repeat_count = max(1, min(int(times or 1), 5))
+        except (ValueError, TypeError):
+            repeat_count = 1
+
+        success_count = 0
+        for i in range(repeat_count):
+            ok = await self._napcat.send_poke(
+                dest_user_id,
+                group_id if is_group else "",
+                is_group=is_group,
+                label="tool_send_poke",
+            )
+            if ok:
+                success_count += 1
+            if i < repeat_count - 1:
+                await asyncio.sleep(0.35)
+
+        if success_count > 0:
+            target_name = ""
+            if is_group:
+                target_name = await self.resolve_member_name(group_id, dest_user_id)
             await self.record_self_poke_to_context(
                 label="tool_send_poke",
                 target_id=dest_user_id,
                 target_name=target_name,
-                group_id=group_id,
-                is_group=True,
+                group_id=group_id if is_group else "",
+                is_group=is_group,
                 stream_id=stream_id,
             )
-            return {"success": True, "content": f"已对用户 {target_name or dest_user_id} 发送戳一戳"}
+            target_label = target_name or dest_user_id
+            msg_str = f"已成功向用户 {target_label} 发送 {success_count} 次戳一戳"
+            return {"success": True, "content": msg_str, "message": msg_str}
         return {"success": False, "error": "发送戳一戳底层调用失败"}
 
     # ===== 生命周期 =====
