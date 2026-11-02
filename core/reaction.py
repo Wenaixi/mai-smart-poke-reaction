@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+import re
 from typing import TYPE_CHECKING, Any
 
 from .state import PokeContext
@@ -333,16 +334,15 @@ class ReactionExecutor:
             for tc in tool_calls
         )
 
-        # 兼容自然语言内联回戳意图（若小模型直接输出标记）
-        if not called_send_poke and any(marker in text for marker in ("[动作:回戳]", "[回戳]", "[send_poke]")):
-            called_send_poke = True
-            for marker in ("[动作:回戳]", "[回戳]", "[send_poke]"):
-                text = text.replace(marker, "")
-            text = text.strip()
+        # 若大模型输出无视或主动留空（且未调工具），属于自主决定不理睬，尊重模型意愿保持静默，绝不强制回退回戳
+        if text.strip() in ("不理睬", "无视", "忽略", "[不理睬]", "[无视]", "[忽略]", "pass", "ignore"):
+            text = ""
 
-        # 检查是否既无文本也无回戳工具调用
         if not text and not called_send_poke:
-            plugin.ctx.logger.debug("[llm] 生成既无文本也无回戳工具调用，回退到底层回戳")
+            if isinstance(result, dict) and result.get("success") is not False:
+                plugin.ctx.logger.info("[llm] 大模型自主决定不予理睬本次戳一戳（普通小功能而已），淡定保持静默")
+                return True
+            plugin.ctx.logger.debug("[llm] 生成失败或异常，回退到底层回戳")
             return False
 
         if self._superseded(ctx, react_token, "llm"):
@@ -448,16 +448,16 @@ class ReactionExecutor:
 
         system = (
             f"{persona}\n\n"
-            f"【功能认知】在 QQ {scene}中，「戳一戳」（双击对方头像，系统提示「{poker} {action}了你」）并不是真实的身体接触，只是 QQ 里的一个轻量趣味互动功能，用来提醒对方或友好打招呼，常带有搞笑有趣的个性化部位或词缀。"
-            "使用「send_poke」工具即可实现这个互动（回戳对方）。\n"
+            f"【功能认知】在 QQ {scene}中，「戳一戳」（双击对方头像，系统提示「{poker} {action}了你」）只是 QQ 里的一个非常普通平常、随处可见的日常小功能，用于轻量提醒或无聊随手点一下，没什么大不了的，绝对不要大惊小怪或过度反应。"
+            "使用「send_poke」工具即可实现回戳互动。\n"
             f"{raw_info_block}"
             f"{personalized_block}"
-            f"现在「{poker}」在 {scene}里对你发起了戳一戳。\n"
-            "你拥有发送戳一戳动作的专属工具「send_poke」。请根据你的人设和当前群聊气氛，自主选择最自然的回应方式：\n"
-            "1. 【随口调侃】：像真人随口回一句话（3~20字内，简短白话，严禁添加引号或括号解释）；\n"
-            "2. 【文字调侃 + 调用 send_poke 回戳】：在随口说话的同时，调用 send_poke 工具回戳对方；\n"
-            "3. 【只回戳不说话】：如果觉得气氛微妙或无需多言，可以只调用 send_poke 工具而不输出任何文字正文；\n"
-            "4. 【只回文字不回戳】：直接输出调侃短句，不调用 send_poke 工具。"
+            f"现在「{poker}」在 {scene}里随手戳了你一下。\n"
+            "你有完全自主的决定权，不要每次都一本正经回复，反应不要太大：\n"
+            "1. 【淡定不理睬】：完全可以不理睬（直接输出空内容，假装没看见，不发文字也不回戳）；\n"
+            "2. 【随手回戳】：如果想打招呼或随手互动，在后台调用「send_poke」工具即可；\n"
+            "3. 【淡定随口调侃】：若当前聊天氛围适合且有话想说，随口回一句极简口语（3~15字内，像真人一样淡定随和，严禁大惊小怪或质问）；\n"
+            "4. 想要回戳直接在后台调用工具即可，严禁在回复文字中添加『（回戳）』或任何动作括号旁白！"
         )
         style = self._plugin.config.reaction.llm_response_style.strip()
         if style:
@@ -469,11 +469,11 @@ class ReactionExecutor:
             )
 
         notice_hint = f"（系统原文：{ctx.raw_text}）" if ctx.raw_text else f"（动作：{action}）"
-        function_hint = "（QQ轻量互动，非物理触碰，使用 send_poke 工具互动）"
+        function_hint = "（QQ普通小功能，用于提醒或随手互动，可调用 send_poke 或不理睬）"
         if is_spam:
-            user = f"「{poker}」连续多次{action}你{notice_hint}{function_hint}，请根据你的人设简短随口回一句（比如调侃怎么连着拍你、是不是找你有急事）。"
+            user = f"「{poker}」连续多次{action}你{notice_hint}{function_hint}，反应不要太大，随口吐槽一句或随手反戳一下。"
         else:
-            user = f"「{poker}」在{scene}里对你发起戳一戳{notice_hint}{function_hint}，请根据你的人设简短随口回一句。"
+            user = f"「{poker}」在{scene}里随手戳了你一下{notice_hint}{function_hint}。反应不要太大，可以淡定调侃、随手回戳、或干脆不理睬。"
 
         return [
             {"role": "system", "content": system},
